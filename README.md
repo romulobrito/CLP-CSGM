@@ -1,62 +1,69 @@
 # CLP-CSGM
 
-Conditional Latent-Prior Compressed Sensing with Generative Models
-(CLP-CSGM) for petrophysical property estimation from dense logs and sparse
-target measurements.
+Conditional Latent-Prior Compressed Sensing with Generative Models (CLP-CSGM)
+for petrophysical property estimation from dense logs and sparse target
+measurements.
 
-This repository contains the code needed to reproduce the CLP-CSGM experiments
-reported in the paper. It intentionally excludes raw well-log data and large
-experiment outputs.
+This repository contains the code needed to reproduce CLP-CSGM experiments.
+It intentionally excludes private raw data and heavy experiment outputs.
 
-## Method
+## 1) What this repository contains
 
-CLP-CSGM learns an autoencoder decoder \(G(z)\) on target-property windows and
-a conditional latent prior \(z_0=h(u)\) from dense log windows. At validation and
-test time, the latent code is refined by
+- Core CLP-CSGM implementation:
+  - `csgm_m2_module.py`
+- Shared benchmark infrastructure:
+  - `sir_cs_benchmark_direct_ub.py`
+  - `sir_cs_pipeline_optimized.py`
+  - `direct_ub_baselines.py`
+  - `external_benchmarks.py`
+- Dataset loaders/builders:
+  - `multi_well_vc.py`
+  - `real_well_f03.py`
+- Main benchmark launchers:
+  - `sir_cs_benchmark_multi_well_vc.py`
+  - `sir_cs_benchmark_real_well_direct_ub.py`
+- Reproduction helpers:
+  - `scripts/`
 
-```text
-z_hat = argmin_z ||M G(z) - b||_2^2 + lambda ||z - z0(u)||_2^2
-y_hat = G(z_hat)
-```
+Note: some filenames keep historical `sir_cs_*` names because CLP-CSGM was
+developed on top of a broader CS benchmark codebase. For CLP-CSGM runs, use
+`--run-csgm-m2` and `--no-lfista`.
 
-The released benchmark scripts use Adam in latent space. They do not use FISTA
-or LFISTA when executed with `--no-lfista`.
+## 2) Method summary
 
-## Repository Contents
+CLP-CSGM learns:
 
-- `csgm_m2_module.py`: CLP-CSGM model, autoencoder, Ridge/MLP latent priors,
-  latent optimization, and ablation branches.
-- `sir_cs_benchmark_multi_well_vc.py`: cross-well Vc benchmark launcher.
-- `sir_cs_benchmark_real_well_direct_ub.py`: F03-4 GR-only porosity launcher.
-- `sir_cs_benchmark_direct_ub.py`: shared direct `[u,b] -> y` benchmark
-  infrastructure and baseline runner.
-- `sir_cs_pipeline_optimized.py`: shared configuration, metrics, plotting, and
-  measurement utilities used by the benchmark launchers.
-- `direct_ub_baselines.py`: direct MLP, PCA, and AE `[u,b]` baselines.
-- `external_benchmarks.py`: shared metric-row utilities and legacy sparse
-  baselines used by the benchmark infrastructure.
-- `multi_well_vc.py`: cross-well Vc dataset loader/window builder.
-- `real_well_f03.py`: F03-4 porosity dataset loader/window builder.
-- `scripts/`: CLP-CSGM result consolidation and reproduction helpers.
+1. a decoder `G(z)` via autoencoder on target windows;
+2. a conditional latent prior `z0 = h(u)` from dense log windows.
 
-Some filenames retain historical `sir_cs_*` names because the CLP-CSGM paper
-was developed on top of a broader compressed-sensing benchmark codebase. In
-this repository, use the commands below with `--run-csgm-m2` and `--no-lfista`
-to run only the CLP-CSGM branch and its direct baselines.
+At validation and test time, latent refinement solves:
 
-## Data
+`z_hat = argmin_z ||M G(z) - b||_2^2 + lambda ||z - z0(u)||_2^2`
 
-Raw data files are not included. Create a `data/` directory and place the
-required private/local files there. See `data/README.md` for filenames and
-expected schemas.
+and returns:
 
-Required files for the paper experiments:
+`y_hat = G(z_hat)`
+
+where:
+
+- `M` is the sparse measurement operator (typically coordinate subsampling),
+- `b` is the sparse target observation vector,
+- `lambda` is selected on validation split.
+
+## 3) Data requirements
+
+Raw data are not included. Create `data/` and place required local files there.
+
+Required files for the paper runs:
 
 - `data/F02-1,F03-2,F06-1_6logs_30dB.txt`
 - `data/F03-4_6logs_30dB.txt`
 - `data/F03-4_AC+GR+Porosity.txt`
 
-## Installation
+Optional files for supplementary Lapa/Auddys scripts depend on your local
+private data organization.
+
+## 4) Installation
 
 ```bash
 python -m venv .venv
@@ -64,19 +71,12 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Reproduce The Paper Runs
+Main dependencies are listed in `requirements.txt`:
+`numpy`, `pandas`, `matplotlib`, `scikit-learn`, `torch`, `PyWavelets`.
 
-The full paper grid can be launched with:
+## 5) Main reproducibility runs
 
-```bash
-bash scripts/run_reproduce_clp_csgm.sh
-```
-
-The script expects the private data files to be present under `data/`.
-
-## Individual Commands
-
-Cross-well Vc, Ridge prior with structural ablations:
+### 5.1 Cross-well Vc (Ridge prior + CLP-CSGM ablations)
 
 ```bash
 python sir_cs_benchmark_multi_well_vc.py \
@@ -85,7 +85,7 @@ python sir_cs_benchmark_multi_well_vc.py \
   --channels sonic,rhob,gr,ai,vp \
   --target vc \
   --step 8 \
-  --measurement-ratios 0.05,0.10,0.20 \
+  --rhos 0.05,0.10,0.20 \
   --seeds 7,23,41 \
   --run-csgm-m2 \
   --run-csgm-ablations \
@@ -93,9 +93,9 @@ python sir_cs_benchmark_multi_well_vc.py \
   --no-lfista
 ```
 
-Repeat the same command with `--step 16` and `--step 32`.
+Repeat with `--step 16` and `--step 32`.
 
-Cross-well Vc, MLP prior sensitivity:
+### 5.2 Cross-well Vc (MLP prior sensitivity)
 
 ```bash
 python sir_cs_benchmark_multi_well_vc.py \
@@ -104,7 +104,7 @@ python sir_cs_benchmark_multi_well_vc.py \
   --channels sonic,rhob,gr,ai,vp \
   --target vc \
   --step 8 \
-  --measurement-ratios 0.05,0.10,0.20 \
+  --rhos 0.05,0.10,0.20 \
   --seeds 7,23,41 \
   --run-csgm-m2 \
   --csgm-prior-type mlp \
@@ -113,13 +113,13 @@ python sir_cs_benchmark_multi_well_vc.py \
 
 Repeat with `--step 16` and `--step 32`.
 
-F03-4 GR-only porosity, Ridge prior with structural ablations:
+### 5.3 Real-well F03-4 GR-only porosity (Ridge + ablations)
 
 ```bash
 python sir_cs_benchmark_real_well_direct_ub.py \
   --data-path data/F03-4_AC+GR+Porosity.txt \
   --u-channels gr \
-  --measurement-ratios 0.20,0.30,0.40,0.50,0.60 \
+  --rhos 0.20,0.30,0.40,0.50,0.60 \
   --seeds 7,23,41 \
   --run-csgm-m2 \
   --run-csgm-ablations \
@@ -127,22 +127,20 @@ python sir_cs_benchmark_real_well_direct_ub.py \
   --no-lfista
 ```
 
-F03-4 GR-only porosity, MLP prior sensitivity:
+### 5.4 Real-well F03-4 GR-only porosity (MLP prior sensitivity)
 
 ```bash
 python sir_cs_benchmark_real_well_direct_ub.py \
   --data-path data/F03-4_AC+GR+Porosity.txt \
   --u-channels gr \
-  --measurement-ratios 0.20,0.30,0.40,0.50,0.60 \
+  --rhos 0.20,0.30,0.40,0.50,0.60 \
   --seeds 7,23,41 \
   --run-csgm-m2 \
   --csgm-prior-type mlp \
   --no-lfista
 ```
 
-## Fast Smoke Tests
-
-After placing the data files, use `--fast` for a short validation run:
+## 6) Fast smoke tests
 
 ```bash
 python sir_cs_benchmark_multi_well_vc.py \
@@ -156,9 +154,7 @@ python sir_cs_benchmark_multi_well_vc.py \
   --csgm-prior-type ridge \
   --no-lfista \
   --fast
-```
 
-```bash
 python sir_cs_benchmark_real_well_direct_ub.py \
   --data-path data/F03-4_AC+GR+Porosity.txt \
   --u-channels gr \
@@ -169,26 +165,45 @@ python sir_cs_benchmark_real_well_direct_ub.py \
   --fast
 ```
 
-## Paper Asset Scripts
+## 7) Robustness and supplementary scripts
 
-After the full runs are complete, generate CLP-CSGM tables and figures with:
+Scripts commonly used for paper supplementary analyses:
 
-```bash
-python scripts/clp_csgm_ablation_assets.py
-python scripts/clp_csgm_paper_assets.py
-python scripts/clp_csgm_quick_figures.py
-```
+- `scripts/auddys_smoke_direct_ub.py`
+- `scripts/auddys_clp_csgm_eda.py`
+- `scripts/clp_csgm_diagnostic_assets.py`
+- `scripts/clp_csgm_runtime_study.py`
+- `scripts/clp_csgm_srec_diagnostics.py`
+- `scripts/clp_csgm_ablation_assets.py`
+- `scripts/clp_csgm_paper_assets.py`
+- `scripts/clp_csgm_quick_figures.py`
 
-These scripts read benchmark CSV outputs and write paper-ready assets under
-`paper_clp_csgm/`. The LaTeX manuscript itself is not included in this minimal
-code repository.
+## 8) Embargo boundary check (anti-leakage)
 
-## Notes On Reproducibility
+For cross-well train/validation overlap diagnostics, use:
 
-- Main seeds: `7,23,41`.
-- Cross-well low-data steps: `8,16,32`.
-- Cross-well measurement ratios: `0.05,0.10,0.20`.
-- F03-4 measurement ratios: `0.20,0.30,0.40,0.50,0.60`.
-- CLP-CSGM Ridge is the main paper-facing variant.
-- CLP-CSGM MLP is included only as a prior-class sensitivity check.
+- `--val-embargo-windows <k>` in `sir_cs_benchmark_multi_well_vc.py`
 
+This drops overlap-prone boundary windows between train and validation tails.
+
+## 9) Outputs and repository policy
+
+This repository should remain lightweight:
+
+- do not commit `outputs/**` heavy run artifacts;
+- do not commit private/raw data files;
+- keep only code, small configs/tables needed for reproducibility logic.
+
+## 10) Reproducibility defaults
+
+- Main seeds: `7,23,41`
+- Cross-well low-data steps: `8,16,32`
+- Cross-well rhos: `0.05,0.10,0.20`
+- F03-4 rhos: `0.20,0.30,0.40,0.50,0.60`
+- Main method: CLP-CSGM Ridge
+- Sensitivity method: CLP-CSGM MLP prior
+
+## 11) Citation
+
+If you use this codebase, cite the CLP-CSGM paper and the corresponding data
+source papers referenced in the manuscript.
