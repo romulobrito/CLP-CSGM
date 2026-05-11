@@ -52,7 +52,7 @@ where:
 
 ## 3) Data requirements
 
-### 3.1 Repository policy (safest option)
+### 3.1 Repository policy
 
 This repository ships **code only**. It does **not** commit processed well-log
 tables or field datasets. Reasons:
