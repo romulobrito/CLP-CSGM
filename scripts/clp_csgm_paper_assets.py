@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 import sys
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Sequence, Tuple
+from typing import Dict, Iterable, List, Sequence, Tuple, Union
 
 import matplotlib
 
@@ -46,6 +46,12 @@ CROSS_WINNERS = os.path.join(
 )
 CROSS_RANK = os.path.join(
     REPO_ROOT, "outputs", "cross_well_vc", "csgm", "m2_grid", "tables", "overall_rank.csv"
+)
+# Per-cell seed statistics for Table tab:crosswell_clp_vs_ae (Ridge ablation runs).
+CROSSWELL_ABLATION_SUMMARIES: Tuple[Tuple[int, str], ...] = (
+    (8, "crosswell_step08_clp_csgm_ablation_ridge"),
+    (16, "crosswell_step16_clp_csgm_ablation_ridge"),
+    (32, "crosswell_step32_clp_csgm_ablation_ridge"),
 )
 F03_SUMMARY = os.path.join(
     REPO_ROOT,
@@ -198,53 +204,138 @@ def build_correlation_table() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _crosswell_summary_row(summary: pd.DataFrame, rho: float, method: str) -> pd.Series:
+    """Return the unique summary row for (measurement_ratio, method)."""
+    rho_col = summary["measurement_ratio"].astype(float)
+    mask = np.isclose(rho_col, float(rho), rtol=0.0, atol=1e-9) & (summary["method"] == method)
+    hits = summary.loc[mask]
+    if len(hits) != 1:
+        raise ValueError(
+            "Expected one row for rho={} method={}, found {} in summary".format(rho, method, len(hits))
+        )
+    return hits.iloc[0]
+
+
 def build_crosswell_winners_table() -> pd.DataFrame:
-    """Format CLP-CSGM vs AE winners for the paper."""
-    df = pd.read_csv(CROSS_WINNERS)
+    """
+    Cross-well CLP-CSGM Ridge vs AE [u,b] with RMSE mean and std across seeds.
+
+    Cell geometry (step, n_train_approx, rho) follows csgm_vs_ae_winners.csv;
+    RMSE moments are taken from direct_ub ablation Ridge summary_focus CSVs.
+    """
+    winners = pd.read_csv(CROSS_WINNERS)
+    rows: List[Dict[str, Union[float, int]]] = []
+    for step, run_name in CROSSWELL_ABLATION_SUMMARIES:
+        summary_path = os.path.join(
+            REPO_ROOT,
+            "outputs",
+            "cross_well_vc",
+            "direct_ub",
+            "runs",
+            run_name,
+            "tables",
+            "summary_focus_clp_csgm_vs_ub.csv",
+        )
+        if not os.path.isfile(summary_path):
+            raise FileNotFoundError("Missing cross-well summary: {}".format(summary_path))
+        summary = pd.read_csv(summary_path)
+        sub = winners.loc[winners["step"] == step, :]
+        for _, w in sub.iterrows():
+            rho = float(w["measurement_ratio"])
+            n_train = int(w["n_train_approx"])
+            csgm = _crosswell_summary_row(summary, rho, "ridge_prior_csgm")
+            ae = _crosswell_summary_row(summary, rho, "ae_regression_ub")
+            c_mean = float(csgm["rmse_mean"])
+            c_std = float(csgm["rmse_std_across_seeds"])
+            a_mean = float(ae["rmse_mean"])
+            a_std = float(ae["rmse_std_across_seeds"])
+            if a_mean == 0.0:
+                raise ValueError("AE RMSE mean is zero for step={} rho={}".format(step, rho))
+            gap_pct = 100.0 * (c_mean - a_mean) / a_mean
+            rows.append(
+                {
+                    "step": step,
+                    "n_train_approx": n_train,
+                    "rho": rho,
+                    "clp_csgm_rmse_mean": c_mean,
+                    "clp_csgm_rmse_std": c_std,
+                    "ae_ub_rmse_mean": a_mean,
+                    "ae_ub_rmse_std": a_std,
+                    "gap_vs_ae_pct": gap_pct,
+                }
+            )
+    frame = pd.DataFrame(rows)
+    if len(frame) != len(winners):
+        raise ValueError("Cross-well table row count mismatch: got {}, expected {}".format(len(frame), len(winners)))
+    return frame
+
+
+def build_crosswell_rank_table() -> pd.DataFrame:
+    """Format overall cross-well ranking from the same ablation summaries used in Table 3."""
+    keep_methods = {
+        "ridge_prior_csgm",
+        "ae_regression_ub",
+        "ml_only",
+        "pca_regression_ub",
+        "mlp_concat_ub",
+    }
+    rows: List[pd.DataFrame] = []
+    for _step, run_name in CROSSWELL_ABLATION_SUMMARIES:
+        summary_path = os.path.join(
+            REPO_ROOT,
+            "outputs",
+            "cross_well_vc",
+            "direct_ub",
+            "runs",
+            run_name,
+            "tables",
+            "summary_focus_clp_csgm_vs_ub.csv",
+        )
+        if not os.path.isfile(summary_path):
+            raise FileNotFoundError("Missing cross-well summary: {}".format(summary_path))
+        df = pd.read_csv(summary_path)
+        rows.append(
+            df.loc[
+                df["method"].isin(keep_methods),
+                ["method", "method_label", "rmse_mean", "relative_l2_mean"],
+            ].copy()
+        )
+    all_cells = pd.concat(rows, ignore_index=True)
+    out = (
+        all_cells.groupby(["method_label"], as_index=False)
+        .agg(
+            mean_rmse=("rmse_mean", "mean"),
+            mean_relative_l2=("relative_l2_mean", "mean"),
+            cells=("rmse_mean", "size"),
+        )
+        .sort_values("mean_rmse")
+        .reset_index(drop=True)
+    )
+    return out.rename(columns={"method_label": "method"})[
+        ["method", "mean_rmse", "mean_relative_l2", "cells"]
+    ]
+
+
+def build_f03_table() -> pd.DataFrame:
+    """Format the real-well F03 GR-only benchmark summary (means plus RMSE seed variability)."""
+    df = pd.read_csv(F03_SUMMARY)
     out = df[
         [
-            "step",
-            "n_train_approx",
             "measurement_ratio",
-            "csgm_rmse",
-            "ae_rmse",
-            "csgm_gap_vs_ae_pct",
+            "method_label",
+            "rmse_mean",
+            "rmse_std_across_seeds",
+            "rmse_ci95_half",
+            "mae_mean",
+            "relative_l2_mean",
         ]
     ].copy()
     out = out.rename(
         columns={
             "measurement_ratio": "rho",
-            "csgm_rmse": "clp_csgm_rmse",
-            "ae_rmse": "ae_ub_rmse",
-            "csgm_gap_vs_ae_pct": "gap_vs_ae_pct",
-        }
-    )
-    return out
-
-
-def build_crosswell_rank_table() -> pd.DataFrame:
-    """Format the overall cross-well ranking."""
-    df = pd.read_csv(CROSS_RANK)
-    out = df[["method_label", "rmse_mean_all_cells", "relative_l2_mean_all_cells", "cells"]].copy()
-    out = out.rename(
-        columns={
-            "method_label": "method",
-            "rmse_mean_all_cells": "mean_rmse",
-            "relative_l2_mean_all_cells": "mean_relative_l2",
-        }
-    )
-    return out
-
-
-def build_f03_table() -> pd.DataFrame:
-    """Format the real-well F03 GR-only benchmark summary."""
-    df = pd.read_csv(F03_SUMMARY)
-    out = df[["measurement_ratio", "method_label", "rmse_mean", "mae_mean", "relative_l2_mean"]].copy()
-    out = out.rename(
-        columns={
-            "measurement_ratio": "rho",
             "method_label": "method",
             "rmse_mean": "rmse",
+            "rmse_std_across_seeds": "rmse_std",
             "mae_mean": "mae",
             "relative_l2_mean": "relative_l2",
         }

@@ -220,15 +220,23 @@ def run_direct_ub_from_data(
         )
         alpha_model.fit(X_train, data["Alpha_train"])
 
-    y_sel, ybg_sel, b_sel, z_sel, _ap = build_lambda_selection_arrays(
-        cfg=cfg,
-        M=M,
-        X_val=X_val,
-        Y_val=Y_val,
-        baseline_model=baseline,
-        alpha_model=alpha_model,
-        rng=rng,
-    )
+    strict_paired_b = bool(getattr(cfg, "paper_strict_paired_b", False))
+    if strict_paired_b:
+        y_sel = Y_val
+        ybg_sel = baseline.predict(X_val)
+        b_sel = B_val
+        z_sel = b_sel - ybg_sel @ M.T
+        _ap = alpha_model.predict(X_val) if alpha_model is not None else None
+    else:
+        y_sel, ybg_sel, b_sel, z_sel, _ap = build_lambda_selection_arrays(
+            cfg=cfg,
+            M=M,
+            X_val=X_val,
+            Y_val=Y_val,
+            baseline_model=baseline,
+            alpha_model=alpha_model,
+            rng=rng,
+        )
 
     lam_hf = None
     if include_hybrid_fista:
@@ -255,8 +263,11 @@ def run_direct_ub_from_data(
     y_hf_rows: List[np.ndarray] = []
 
     for i in range(n_test):
-        noise = cfg.measurement_noise_std * rng.normal(size=m)
-        b_i = M @ Y_test[i] + noise
+        if strict_paired_b:
+            b_i = B_test[i]
+        else:
+            noise = cfg.measurement_noise_std * rng.normal(size=m)
+            b_i = M @ Y_test[i] + noise
         y_ml = Ybg_test[i]
         z_i = b_i - M @ y_ml
 

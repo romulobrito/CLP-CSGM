@@ -4,24 +4,24 @@
 """
 sir_cs_pipeline_optimized.py
 
-Pipeline minimo-ao-publicavel para testar a viabilidade de:
+Pipeline mínimo-ao-publicável para testar a viabilidade de:
     y = f_theta(u) + Psi alpha + xi
-com inferencia via
+com inferência via
     b = M y + eta
-e recuperacao da inovacao esparsa por compressed sensing.
+e recuperação da inovação esparsa por compressed sensing.
 
 O script executa:
-1) geracao sintetica controlada;
-2) treino de baseline multi-saida (ML-only);
+1) geração sintética controlada;
+2) treino de baseline multi-saída (ML-only);
 3) treino opcional de preditor de coeficientes esparsos (para weighted-CS);
-4) avaliacao de:
+4) avaliação de:
    - ML-only
    - CS-only
    - Hybrid SIR-CS
    - Weighted Hybrid SIR-CS
-5) varredura de hiperparametros e producao de tabelas/figuras.
+5) varredura de hiperparâmetros e produção de tabelas/figuras.
 
-Dependencias:
+Dependências:
     numpy, pandas, matplotlib, scikit-learn
 
 Uso:
@@ -37,7 +37,7 @@ Perfis:
     solver_comparison   Etapa 1: FISTA vs SPGL1; artefactos em outputs/solver_comparison/runs/<id>/
     explore             poucos dados, iteracao rapida
 
-Saidas:
+Saídas:
     outputs/
         detailed_results.csv   (uma linha por amostra de teste)
         summary_by_seed.csv    (media por seed; base para IC entre seeds)
@@ -69,7 +69,7 @@ from sklearn.preprocessing import StandardScaler
 
 
 # ============================================================
-# 1) Configuracao
+# 1) Configuração
 # ============================================================
 
 @dataclass
@@ -77,7 +77,7 @@ class Config:
     # reprodutibilidade
     seeds: List[int] = field(default_factory=lambda: [7, 13, 23])
 
-    # dimensoes do problema
+    # dimensões do problema
     n_train: int = 1200
     n_val: int = 300
     n_test: int = 300
@@ -86,17 +86,19 @@ class Config:
 
     # estrutura do residual
     residual_basis: str = "identity"   # "identity" ou "dct"
-    residual_k: int = 6                # no de coeficientes relevantes
+    residual_k: int = 6                # nº de coeficientes relevantes
     residual_amplitude: float = 1.2
     residual_mode: str = "support_from_u"  # "support_from_u" ou "random"
 
-    # ruidos
+    # ruídos
     measurement_noise_std: float = 0.02
     output_noise_std: float = 0.01
 
-    # medicoes comprimidas
+    # medições comprimidas
     measurement_kind: str = "gaussian"  # "gaussian" ou "subsample"
     measurement_ratios: List[float] = field(default_factory=lambda: [0.20, 0.30, 0.40, 0.50])
+    # direct-UB benchmarks: same sparse measurement vector b across CSGM and [u,b] baselines on val/test.
+    paper_strict_paired_b: bool = False
 
     # baseline ML
     baseline_hidden: Tuple[int, int] = (128, 128)
@@ -122,7 +124,7 @@ class Config:
         default_factory=lambda: [1e-4, 3e-4, 1e-3, 3e-3, 1e-2, 3e-2]
     )
     use_warm_starts: bool = True
-    lambda_selection_max_samples: Optional[int] = None  # use None para usar toda a validacao
+    lambda_selection_max_samples: Optional[int] = None  # use None para usar toda a validação
     weight_mode: str = "inverse_magnitude"  # como construir pesos do weighted l1
     weight_eps: float = 1e-3
     weight_clip_min: float = 0.15
@@ -133,7 +135,7 @@ class Config:
     run_cs_only: bool = True
     run_weighted_hybrid: bool = True
 
-    # visualizacao
+    # visualização
     save_dir: str = "outputs"
     # Relative to save_dir: figures go under paper/figures/ for LaTeX (add e.g. real/ later).
     plots_subdir: str = "../paper/figures/synthetic"
@@ -141,7 +143,7 @@ class Config:
     # max pontos no scatter paridade GT vs pred (subamostra para performance)
     max_gt_scatter_points: int = 50000
 
-    # metrica de selecao de lambda
+    # métrica de seleção de lambda
     model_selection_metric: str = "rmse"  # "rmse" ou "mae"
 
     # logs de andamento (stdout)
@@ -150,7 +152,7 @@ class Config:
     test_log_interval: int = 50
 
     # "paper": defaults above; "explore": fast iteration; "phase0_baseline": roadmap Fase 0;
-    # "solver_comparison": Etapa 1 roadmap - hybrid e cs_only com FISTA e SPGL1 (sem weighted).
+    # "solver_comparison": Etapa 1 roadmap — hybrid e cs_only com FISTA e SPGL1 (sem weighted).
     # "lfista_integrated*": mesmo protocolo sintetico + ramo PyTorch LFISTA (artefactos dedicados).
     # "lfista_vs_classical*": Phase 0 + dual_cs_solver (hybrid_fista, ...) + LFISTA; comparacao directa.
     config_profile: Literal[
@@ -247,7 +249,7 @@ class Config:
 
 
 # ============================================================
-# 2) Utilidades matematicas
+# 2) Utilidades matemáticas
 # ============================================================
 
 
@@ -710,7 +712,7 @@ def layout_lfista_vs_classical_run(cfg: Config, run_id: str) -> None:
 def orthonormal_dct_matrix(n: int) -> np.ndarray:
     """
     Matriz DCT-II ortonormal.
-    Se x = Psi @ alpha, entao alpha = Psi.T @ x.
+    Se x = Psi @ alpha, então alpha = Psi.T @ x.
     """
     Psi = np.zeros((n, n), dtype=float)
     factor0 = math.sqrt(1.0 / n)
@@ -774,7 +776,7 @@ def power_iteration_lipschitz(A: np.ndarray, n_iter: int = 100, v0: Optional[np.
     else:
         v = np.asarray(v0, dtype=float).reshape(-1).copy()
         if v.size != n:
-            raise ValueError("v0 deve ter dimensao compativel com o numero de colunas de A.")
+            raise ValueError("v0 deve ter dimensão compatível com o número de colunas de A.")
     v /= np.linalg.norm(v) + 1e-12
     for _ in range(n_iter):
         v = A.T @ (A @ v)
@@ -909,12 +911,12 @@ def support_f1(alpha_true: np.ndarray, alpha_hat: np.ndarray, threshold: float =
 
 
 # ============================================================
-# 3) Geracao sintetica
+# 3) Geração sintética
 # ============================================================
 
 def random_feature_background(X: np.ndarray, n_output: int, rng: np.random.Generator) -> np.ndarray:
     """
-    Gera componente global suave e nao linear:
+    Gera componente global suave e não linear:
         y_bg = B2 tanh(B1 x + c) + termos senoidais leves
     """
     p = X.shape[1]
@@ -926,7 +928,7 @@ def random_feature_background(X: np.ndarray, n_output: int, rng: np.random.Gener
     W2 = rng.normal(scale=0.7 / math.sqrt(h), size=(h, n_output))
     y_bg = H @ W2
 
-    # componente baixa frequencia na saida
+    # componente baixa frequência na saída
     grid = np.linspace(0.0, 1.0, n_output)
     coeff1 = (X[:, 0:1] + 0.5 * X[:, 1:2])
     coeff2 = (0.7 * X[:, 2:3] - 0.3 * X[:, 3:4])
@@ -943,9 +945,9 @@ def choose_support_from_u(
     mode: str
 ) -> np.ndarray:
     """
-    Define suporte da inovacao.
-    - support_from_u: suporte parcialmente previsivel a partir da entrada
-    - random: suporte aleatorio
+    Define suporte da inovação.
+    - support_from_u: suporte parcialmente previsível a partir da entrada
+    - random: suporte aleatório
     """
     if mode == "random":
         return rng.choice(n_output, size=k, replace=False)
@@ -955,7 +957,7 @@ def choose_support_from_u(
     center = int(((math.tanh(score) + 1.0) / 2.0) * (n_output - 1))
     offsets = np.array([-12, -6, -3, 0, 4, 9, 14, 18])
     candidates = np.clip(center + offsets, 0, n_output - 1)
-    # mistura entre parte previsivel e aleatoria para evitar "oraculo"
+    # mistura entre parte previsível e aleatória para evitar "oráculo"
     base = list(np.unique(candidates))
     rng.shuffle(base)
     picked = base[: min(k, len(base))]
@@ -979,7 +981,7 @@ def generate_sparse_alpha(
     for i in range(n):
         supp = choose_support_from_u(X[i], n_output, k, rng, mode=mode)
 
-        # amplitudes dependentes de X para dar conteudo regressivo real
+        # amplitudes dependentes de X para dar conteúdo regressivo real
         amps = amplitude * (
             0.6 * rng.choice([-1.0, 1.0], size=k)
             + 0.6 * np.tanh(X[i, 4:4 + min(k, X.shape[1] - 4)].mean() if X.shape[1] > 4 else X[i, 0])
@@ -1087,12 +1089,12 @@ def build_weights_from_alpha_prediction(
     cfg: Config,
 ) -> np.ndarray:
     """
-    Pesos pequenos onde o modelo preve maior magnitude de alpha.
+    Pesos pequenos onde o modelo prevê maior magnitude de alpha.
     """
     mag = np.abs(alpha_pred)
     if cfg.weight_mode == "inverse_magnitude":
         w = 1.0 / (mag + cfg.weight_eps) ** cfg.weight_power
-        # normaliza para media ~1
+        # normaliza para média ~1
         w = w / (np.mean(w) + 1e-12)
         w = np.clip(w, cfg.weight_clip_min, cfg.weight_clip_max)
         return w
@@ -1100,7 +1102,7 @@ def build_weights_from_alpha_prediction(
 
 
 # ============================================================
-# 6) Selecao de lambda
+# 6) Seleção de lambda
 # ============================================================
 
 def evaluate_metric(y_true: np.ndarray, y_pred: np.ndarray, metric_name: str) -> float:
@@ -1108,7 +1110,7 @@ def evaluate_metric(y_true: np.ndarray, y_pred: np.ndarray, metric_name: str) ->
         return rmse(y_true, y_pred)
     if metric_name == "mae":
         return float(mean_absolute_error(y_true, y_pred))
-    raise ValueError(f"Metrica desconhecida: {metric_name}")
+    raise ValueError(f"Métrica desconhecida: {metric_name}")
 
 
 def build_lambda_selection_arrays(
@@ -1333,7 +1335,7 @@ def run_lfista_branch(
 
 
 # ============================================================
-# 7) Avaliacao
+# 7) Avaliação
 # ============================================================
 
 def run_single_setting(
@@ -1370,7 +1372,7 @@ def run_single_setting(
         f"  [setup] m={m} measurement_kind={cfg.measurement_kind} | A.shape={A.shape}",
     )
 
-    # medicoes ruidosas no teste serao geradas sob demanda
+    # medições ruidosas no teste serão geradas sob demanda
     # baseline
     baseline = MultiOutputMLP(
         hidden_layer_sizes=cfg.baseline_hidden,
@@ -1809,7 +1811,7 @@ def run_single_setting(
 
 
 # ============================================================
-# 8) Relatorios e figuras
+# 8) Relatórios e figuras
 # ============================================================
 
 def summarize_results_per_seed(df: pd.DataFrame) -> pd.DataFrame:
@@ -2655,27 +2657,27 @@ def plot_real_well_depth_profile(
 
 
 # ============================================================
-# 9) Orquestracao
+# 9) Orquestração
 # ============================================================
 
 def print_stage_guidance(summary: pd.DataFrame) -> None:
     print("\n" + "=" * 72)
-    print("LEITURA DOS RESULTADOS / DECISAO METODOLOGICA")
+    print("LEITURA DOS RESULTADOS / DECISÃO METODOLÓGICA")
     print("=" * 72)
 
     pivot = summary.pivot_table(index="measurement_ratio", columns="method", values="rmse_mean")
     print(pivot.round(4).to_string())
 
-    print("\nCriterio minimo de viabilidade:")
+    print("\nCritério mínimo de viabilidade:")
     print("1) hybrid deve superar ml_only em parte substancial das razoes de medicao;")
     print("2) o ganho do hybrid sobre ml_only deve persistir ao variar m/N;")
     print("3) cs_only deve ser pior que hybrid quando a componente global nao e esparsa;")
     print("4) weighted_hybrid pode superar hybrid quando o preditor de alpha for informativo.")
 
-    print("\nSe esses 4 pontos ocorrerem, voce ja tem base para:")
-    print("- analise de sensibilidade;")
-    print("- estudo de ablacao;")
-    print("- versao publicavel em dados sinteticos + caso aplicado.")
+    print("\nSe esses 4 pontos ocorrerem, você já tem base para:")
+    print("- análise de sensibilidade;")
+    print("- estudo de ablação;")
+    print("- versão publicável em dados sintéticos + caso aplicado.")
 
 
 def parse_cli_args() -> argparse.Namespace:

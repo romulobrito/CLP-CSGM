@@ -309,6 +309,7 @@ def write_dataset_manifest(
     n_te: int,
     window_len: int,
     step: int,
+    paper_strict_paired_b: bool,
 ) -> str:
     lines = [
         "Auddys Excel smoke dataset manifest.",
@@ -324,6 +325,7 @@ def write_dataset_manifest(
         "split_windows_n_train: {}".format(n_tr),
         "split_windows_n_val: {}".format(n_va),
         "split_windows_n_test: {}".format(n_te),
+        "paper_strict_paired_b: {}".format(bool(paper_strict_paired_b)),
         "",
         "Protocol notes:",
         "  - Windows follow depth order (contiguous split).",
@@ -394,6 +396,8 @@ def main() -> None:
         cfg.csgm_restarts = int(args.csgm_restarts)
         cfg.csgm_opt_lr = float(args.csgm_opt_lr)
         cfg.csgm_lambda_grid = _parse_float_list(args.csgm_lambda_grid)
+        # Align with main paper runners: same sparse measurement vector b for CSGM and direct [u,b] baselines.
+        cfg.paper_strict_paired_b = True
 
         dub_cfg = dub.DirectUBTrainConfig(ae_epochs=80)
         run_ae = not bool(args.no_ae)
@@ -516,6 +520,7 @@ def main() -> None:
             n_te=int(n_te),
             window_len=int(args.window_len),
             step=int(args.step),
+            paper_strict_paired_b=bool(cfg.paper_strict_paired_b),
         )
         elapsed = float(time.time() - t0)
         run_manifest_path = write_run_manifest(

@@ -67,4 +67,7 @@ python sir_cs_benchmark_real_well_direct_ub.py \
   --run-id "f03_gr_only_clp_csgm_mlp_prior_full"
 
 python scripts/clp_csgm_ablation_assets.py
+python scripts/clp_csgm_paper_assets.py
+python scripts/clp_csgm_quick_figures.py
+python scripts/clp_csgm_runtime_study.py
 

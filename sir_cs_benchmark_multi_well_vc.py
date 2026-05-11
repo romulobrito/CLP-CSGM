@@ -385,6 +385,7 @@ def main() -> None:
     cfg.csgm_restarts = int(args.csgm_restarts)
     cfg.csgm_opt_lr = float(args.csgm_opt_lr)
     cfg.csgm_lambda_grid = _parse_float_list(str(args.csgm_lambda_grid))
+    cfg.paper_strict_paired_b = True
     bg_override = int(args.lfista_bg_epochs)
     if bg_override > 0:
         cfg.lfista_num_epochs_bg = bg_override

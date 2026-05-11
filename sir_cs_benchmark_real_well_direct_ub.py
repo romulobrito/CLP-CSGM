@@ -72,7 +72,7 @@ def write_dataset_manifest(
     ch_str = ", ".join(c.upper() for c in u_channels)
     u_dim = len(u_channels)
     lines = [
-        "F03-4 real well: sliding-window dataset (contiguous split along depth).",
+        "F03-4 real well: depth-first split, then sliding-window dataset.",
         "",
         "data_path: " + str(data_path),
         "window_len (L, n_output): " + str(window_len),
@@ -84,7 +84,7 @@ def write_dataset_manifest(
         "u = ["
         + " || ".join(c.upper() + " segment" for c in u_channels)
         + "] in R^{" + str(u_dim) + "*L}; y = Porosity segment in R^L.",
-        "No shuffle: windows are ordered by depth; train is shallow, test is deeper block.",
+        "No shuffle: depth rows are split contiguously before windowing; train is shallower, test is deeper.",
         "",
         "approx depth range train (m): " + depth_tr,
         "approx depth range val (m): " + depth_va,
@@ -252,18 +252,46 @@ def main() -> None:
     tab = rwf.load_f03_table(data_path)
     u_channels_raw = tuple(c.strip() for c in str(args.u_channels).split(",") if c.strip())
     u_channels = rwf.normalize_channels(u_channels_raw)
-    x_all, y_all, centers, _ = rwf.build_sliding_windows(
-        tab, int(args.window_len), st, channels=u_channels
+    n_rows_total = int(tab.n_rows)
+    tr_row_sl, va_row_sl, te_row_sl, n_tr_rows, n_va_rows, n_te_rows = _contiguous_row_split(
+        n_rows_total, float(args.train_frac), float(args.val_frac), int(args.window_len)
     )
-    n_win = int(x_all.shape[0])
-    sl_tr, sl_va, sl_te, n_tr, n_va, n_te = rwf.contiguous_split(
-        n_win, float(args.train_frac), float(args.val_frac)
+    tab_tr = rwf.F03Table(
+        depth=tab.depth[tr_row_sl].copy(),
+        ac=tab.ac[tr_row_sl].copy(),
+        gr=tab.gr[tr_row_sl].copy(),
+        porosity=tab.porosity[tr_row_sl].copy(),
     )
+    tab_va = rwf.F03Table(
+        depth=tab.depth[va_row_sl].copy(),
+        ac=tab.ac[va_row_sl].copy(),
+        gr=tab.gr[va_row_sl].copy(),
+        porosity=tab.porosity[va_row_sl].copy(),
+    )
+    tab_te = rwf.F03Table(
+        depth=tab.depth[te_row_sl].copy(),
+        ac=tab.ac[te_row_sl].copy(),
+        gr=tab.gr[te_row_sl].copy(),
+        porosity=tab.porosity[te_row_sl].copy(),
+    )
+    x_tr, y_tr, centers_tr, _ = rwf.build_sliding_windows(
+        tab_tr, int(args.window_len), st, channels=u_channels
+    )
+    x_va, y_va, centers_va, _ = rwf.build_sliding_windows(
+        tab_va, int(args.window_len), st, channels=u_channels
+    )
+    x_te, y_te, centers_te, _ = rwf.build_sliding_windows(
+        tab_te, int(args.window_len), st, channels=u_channels
+    )
+    n_tr = int(x_tr.shape[0])
+    n_va = int(x_va.shape[0])
+    n_te = int(x_te.shape[0])
+    n_win = n_tr + n_va + n_te
     l = int(args.window_len)
     p_in = len(u_channels) * l
-    d_lo_tr = _ranges_for_split(centers, sl_tr)
-    d_lo_va = _ranges_for_split(centers, sl_va)
-    d_lo_te = _ranges_for_split(centers, sl_te)
+    d_lo_tr = _ranges_for_values(centers_tr)
+    d_lo_va = _ranges_for_values(centers_va)
+    d_lo_te = _ranges_for_values(centers_te)
 
     cfg = Config()
     cfg.log_progress = False
@@ -290,13 +318,17 @@ def main() -> None:
     cfg.csgm_restarts = int(args.csgm_restarts)
     cfg.csgm_opt_lr = float(args.csgm_opt_lr)
     cfg.csgm_lambda_grid = _parse_float_list(str(args.csgm_lambda_grid))
+    cfg.paper_strict_paired_b = True
     bg_override = int(args.lfista_bg_epochs)
     if bg_override > 0:
         cfg.lfista_num_epochs_bg = bg_override
 
-    data = rwf.build_direct_ub_data_dict(
-        x_all, y_all, sl_tr, sl_va, sl_te, str(args.residual_basis)
-    )
+    x_all = np.concatenate([x_tr, x_va, x_te], axis=0)
+    y_all = np.concatenate([y_tr, y_va, y_te], axis=0)
+    sl_tr = slice(0, n_tr)
+    sl_va = slice(n_tr, n_tr + n_va)
+    sl_te = slice(n_tr + n_va, n_win)
+    data = rwf.build_direct_ub_data_dict(x_all, y_all, sl_tr, sl_va, sl_te, str(args.residual_basis))
 
     dub_cfg = dub.DirectUBTrainConfig()
     joint_only = True
@@ -348,7 +380,8 @@ def main() -> None:
             tee,
             "Real well F03 | n_windows=" + str(n_win) + " L=" + str(l)
             + " u_channels=[" + ",".join(c.upper() for c in u_channels) + "]"
-            + " p_input=" + str(p_in),
+            + " p_input=" + str(p_in)
+            + " split=depth-first-windowing",
         )
         _log(tee, "DATASET_MANIFEST: " + man_path)
         _log(
@@ -428,7 +461,8 @@ def main() -> None:
             _log(tee, "Figure: " + p08)
         if (not bool(args.no_plots)) and first_parity_fragment is not None:
             try:
-                row_starts = rwf.test_window_row_starts(n_tr, n_va, n_te, st)
+                row_offset = int(n_tr_rows + n_va_rows)
+                row_starts = np.arange(int(n_te), dtype=np.int64) * int(st) + row_offset
                 depth_axis = np.asarray(tab.depth, dtype=np.float64).ravel()
                 nrows = int(depth_axis.shape[0])
                 known_model_keys = [
@@ -504,9 +538,14 @@ def main() -> None:
             "n_val": n_va,
             "n_test": n_te,
             "n_windows": n_win,
+            "n_rows_total": n_rows_total,
+            "n_rows_train": n_tr_rows,
+            "n_rows_val": n_va_rows,
+            "n_rows_test": n_te_rows,
             "u_channels": list(u_channels),
             "p_input": p_in,
             "contiguous_split": True,
+            "split_before_windowing": True,
             "dataset_manifest": man_path,
             "protocol_txt": proto_path,
             "tables_dir": tables_dir,
@@ -536,11 +575,34 @@ def main() -> None:
     print("Artifacts: " + run_root, flush=True)
 
 
-def _ranges_for_split(centers: List[float], sl: slice) -> tuple[float, float]:
-    c = np.asarray(centers, dtype=np.float64)[sl]
+def _ranges_for_values(centers: List[float]) -> tuple[float, float]:
+    c = np.asarray(centers, dtype=np.float64)
     if c.size < 1:
         return (float("nan"), float("nan"))
     return (float(np.min(c)), float(np.max(c)))
+
+
+def _contiguous_row_split(
+    n_rows: int, train_frac: float, val_frac: float, window_len: int
+) -> tuple[slice, slice, slice, int, int, int]:
+    if not (0.0 < float(train_frac) < 1.0) or not (0.0 < float(val_frac) < 1.0):
+        raise ValueError("train_frac and val_frac must be in (0,1).")
+    if float(train_frac) + float(val_frac) >= 1.0:
+        raise ValueError("train_frac + val_frac must be < 1.0.")
+    n_tr = int(np.floor(float(train_frac) * float(n_rows)))
+    n_va = int(np.floor(float(val_frac) * float(n_rows)))
+    n_te = int(n_rows - n_tr - n_va)
+    l = int(window_len)
+    if n_tr < l or n_va < l or n_te < l:
+        raise ValueError(
+            "Row split too small for window_len={}: n_tr={} n_va={} n_te={}".format(
+                l, n_tr, n_va, n_te
+            )
+        )
+    sl_tr = slice(0, n_tr)
+    sl_va = slice(n_tr, n_tr + n_va)
+    sl_te = slice(n_tr + n_va, n_rows)
+    return sl_tr, sl_va, sl_te, n_tr, n_va, n_te
 
 
 if __name__ == "__main__":
